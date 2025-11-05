@@ -127,13 +127,19 @@ def hubspot_webhook():
         print(f"Existing records found: {len(existing_records) if existing_records else 0}")
         
         # Prepare record data (map HubSpot fields to Salesforce fields)
+        # Build combined provider name from First_Name and Last_Name if needed
+        first_name = (webhook_data.get("First_Name") or webhook_data.get("first_name") or "").strip()
+        last_name = (webhook_data.get("Last_Name") or webhook_data.get("last_name") or "").strip()
+        combined_provider_name = " ".join(part for part in (first_name, last_name) if part).strip() or None
+
         record_data = {
             "City__c": webhook_data.get("City__c") or webhook_data.get("city"),
             "Country__c": webhook_data.get("Country__c") or webhook_data.get("country"),
             "Healthcare_Organization_Name__c": webhook_data.get("Healthcare_Organization_Name__c") or webhook_data.get("organization_name"),
             "NPI__c": npi,
             "Phone_Number__c": webhook_data.get("Phone_Number__c") or webhook_data.get("phone"),
-            "Provider_Name__c": webhook_data.get("Provider_Name__c") or webhook_data.get("provider_name"),
+            # Prefer explicit Provider_Name__c, then provider_name, then combined First+Last
+            "Provider_Name__c": webhook_data.get("Provider_Name__c") or webhook_data.get("provider_name") or combined_provider_name,
             "Secure_Email__c": webhook_data.get("Secure_Email__c") or webhook_data.get("email"),
             "Secure_Fax_Number__c": webhook_data.get("Secure_Fax_Number__c") or webhook_data.get("fax"),
             "State__c": webhook_data.get("State__c") or webhook_data.get("state"),
