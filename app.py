@@ -46,6 +46,12 @@ def getAll(headers, instance_url):
         return json.loads(response.text)
     return False
 
+def getSamplesForNonInternalBatches(headers, instance_url, start_date, end_date):
+    response = get(f"/services/apexrest/hubspotintegration/getsamplesfornoninternalbatches?start={start_date}&end={end_date}", headers, instance_url)
+    if response.status_code == 200:
+        return json.loads(response.text)
+    return False
+
 def build_jwt(client_id: str, username: str, private_key: str) -> str:
     payload = {
         "iss": client_id,
@@ -127,23 +133,19 @@ def hubspot_webhook():
         print(f"Existing records found: {len(existing_records) if existing_records else 0}")
         
         # Prepare record data (map HubSpot fields to Salesforce fields)
-        # Build combined provider name from First_Name and Last_Name if needed
-        first_name = (webhook_data.get("First_Name") or webhook_data.get("first_name") or "").strip()
-        last_name = (webhook_data.get("Last_Name") or webhook_data.get("last_name") or "").strip()
-        combined_provider_name = " ".join(part for part in (first_name, last_name) if part).strip() or None
-
         record_data = {
             "City__c": webhook_data.get("City__c") or webhook_data.get("city"),
             "Country__c": webhook_data.get("Country__c") or webhook_data.get("country"),
             "Healthcare_Organization_Name__c": webhook_data.get("Healthcare_Organization_Name__c") or webhook_data.get("organization_name"),
             "NPI__c": npi,
             "Phone_Number__c": webhook_data.get("Phone_Number__c") or webhook_data.get("phone"),
-            # Prefer explicit Provider_Name__c, then provider_name, then combined First+Last
-            "Provider_Name__c": webhook_data.get("Provider_Name__c") or webhook_data.get("provider_name") or combined_provider_name,
+            "Provider_Name__c": webhook_data.get("Provider_Name__c") or webhook_data.get("provider_name"),
             "Secure_Email__c": webhook_data.get("Secure_Email__c") or webhook_data.get("email"),
             "Secure_Fax_Number__c": webhook_data.get("Secure_Fax_Number__c") or webhook_data.get("fax"),
             "State__c": webhook_data.get("State__c") or webhook_data.get("state"),
-            "Street__c": webhook_data.get("Street__c") or webhook_data.get("street")
+            "Street__c": webhook_data.get("Street__c") or webhook_data.get("street"),
+            "ZipCode__c": webhook_data.get("ZipCode__c") or webhook_data.get("zip"),
+            "Preferred_Contact_Method__c": webhook_data.get("Preferred_Contact_Method__c") or webhook_data.get("preferred_contact_method"),
         }
         
         # Remove None values
@@ -276,6 +278,77 @@ def all_records():
         
     except Exception as e:
         app.logger.error(f"Error retrieving all records: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/samples', methods=['GET'])
+def get_samples():
+    """Get samples for non-internal batches by date range
+    
+    Query parameters:
+    - start: Start date (YYYY-MM-DD) - required
+    - end: End date (YYYY-MM-DD) - required
+    
+    Example: /api/samples?start=2025-09-25&end=2025-10-25
+    """
+    try:
+        # Get date parameters from query string
+        start_date = request.args.get('start')
+        end_date = request.args.get('end')
+        
+        # Validate required parameters
+        if not start_date or not end_date:
+            return jsonify({
+                "status": "error",
+                "message": "Both 'start' and 'end' date parameters are required",
+                "example": "/api/samples?start=2025-09-25&end=2025-10-25"
+            }), 400
+        
+        # Validate date format (basic check)
+        try:
+            datetime.strptime(start_date, '%Y-%m-%d')
+            datetime.strptime(end_date, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({
+                "status": "error",
+                "message": "Invalid date format. Use YYYY-MM-DD",
+                "example": "/api/samples?start=2025-09-25&end=2025-10-25"
+            }), 400
+        
+        # Authenticate with Salesforce
+        access_token, instance_url = jwt_authenticate_HUB()
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        if not access_token or not instance_url:
+            return jsonify({
+                "status": "error",
+                "message": "❌ Couldn't authenticate with Salesforce"
+            }), 401
+        
+        # Get samples data
+        samples = getSamplesForNonInternalBatches(headers, instance_url, start_date, end_date)
+        
+        if samples is False:
+            return jsonify({
+                "status": "error",
+                "message": "Failed to retrieve samples"
+            }), 500
+        
+        return jsonify({
+            "status": "success",
+            "start_date": start_date,
+            "end_date": end_date,
+            "count": len(samples) if samples else 0,
+            "data": samples
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"Error retrieving samples: {str(e)}")
         return jsonify({
             "status": "error",
             "message": str(e)
@@ -465,6 +538,12 @@ def index():
             a:hover {
                 text-decoration: underline;
             }
+            code {
+                background-color: #f8f9fa;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 13px;
+            }
         </style>
     </head>
     <body>
@@ -490,6 +569,14 @@ def index():
                 <span class="method method-get">GET</span>
                 <strong><a href="/api/all">/api/all</a></strong>
                 <p>Retrieve all health organization records from Salesforce</p>
+            </div>
+            
+            <div class="endpoint">
+                <span class="method method-get">GET</span>
+                <strong>/api/samples</strong>
+                <p>Get samples for non-internal batches by date range</p>
+                <p><strong>Parameters:</strong> <code>start</code> and <code>end</code> (YYYY-MM-DD)</p>
+                <p><strong>Example:</strong> <a href="/api/samples?start=2025-09-25&end=2025-10-25">/api/samples?start=2025-09-25&end=2025-10-25</a></p>
             </div>
             
             <div class="endpoint">
